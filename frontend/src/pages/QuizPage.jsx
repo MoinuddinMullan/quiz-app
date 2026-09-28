@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import CountdownTimer from '../components/CountdownTimer';
 import api from '../api/axios';
-
-const formatTime = (seconds) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 
 const QuizPage = () => {
   const { subject } = useParams();
@@ -13,6 +12,7 @@ const QuizPage = () => {
   const [timeLeft, setTimeLeft] = useState(1200);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [quizStartTime] = useState(Date.now());
+  const [showTimeoutAlert, setShowTimeoutAlert] = useState(false);
 
   useEffect(() => {
     const fetchQuestions = async () => {
@@ -22,6 +22,7 @@ const QuizPage = () => {
         setQuestions(fetchedQuestions);
         setAnswers(Array(fetchedQuestions.length).fill(null));
       } catch (error) {
+        console.error('Error fetching questions:', error);
         navigate('/dashboard');
       }
     };
@@ -29,35 +30,7 @@ const QuizPage = () => {
     if (subject) fetchQuestions();
   }, [subject, navigate]);
 
-  useEffect(() => {
-    if (timeLeft <= 0) {
-      handleSubmit();
-      return;
-    }
-
-    const interval = setInterval(() => {
-      setTimeLeft((current) => current - 1);
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [timeLeft]);
-
-  const currentQuestion = questions[currentIndex] || null;
-
-  const progressWidth = useMemo(
-    () => `${((currentIndex + 1) / questions.length) * 100}%`,
-    [currentIndex, questions.length]
-  );
-
-  const handleSelectAnswer = (optionId) => {
-    setAnswers((current) => {
-      const next = [...current];
-      next[currentIndex] = optionId;
-      return next;
-    });
-  };
-
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (isSubmitting || questions.length === 0) return;
 
     setIsSubmitting(true);
@@ -77,9 +50,43 @@ const QuizPage = () => {
       });
       navigate(`/results/${response.data.attemptId}`);
     } catch (error) {
-      console.error(error);
+      console.error('Error submitting quiz:', error);
+      setIsSubmitting(false);
       navigate('/dashboard');
     }
+  }, [isSubmitting, questions, answers, subject, quizStartTime, navigate]);
+
+  const handleTimeExpired = useCallback(() => {
+    setShowTimeoutAlert(true);
+    handleSubmit();
+  }, [handleSubmit]);
+
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      handleTimeExpired();
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setTimeLeft((current) => Math.max(current - 1, 0));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [timeLeft, handleTimeExpired]);
+
+  const currentQuestion = questions[currentIndex] || null;
+
+  const progressWidth = useMemo(
+    () => `${questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0}%`,
+    [currentIndex, questions.length]
+  );
+
+  const handleSelectAnswer = (optionId) => {
+    setAnswers((current) => {
+      const next = [...current];
+      next[currentIndex] = optionId;
+      return next;
+    });
   };
 
   const handleNext = () => {
@@ -94,14 +101,30 @@ const QuizPage = () => {
   };
 
   if (!currentQuestion) {
-    return <div className="min-h-screen bg-background text-on-surface flex items-center justify-center">Loading questions...</div>;
+    return (
+      <div className="min-h-screen bg-background text-on-surface flex items-center justify-center">
+        Loading questions...
+      </div>
+    );
   }
 
   return (
     <div className="min-h-screen bg-background pb-28 text-on-surface">
+      {showTimeoutAlert && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-error/90 text-on-error px-4 py-3 text-center font-medium backdrop-blur-sm">
+          ⏰ Time's up! Your answers have been auto-submitted.
+        </div>
+      )}
+
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-outline-variant/30 bg-surface/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
-          <button type="button" onClick={() => navigate('/dashboard')} className="material-symbols-outlined text-2xl text-on-surface">arrow_back</button>
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard')}
+            className="material-symbols-outlined text-2xl text-on-surface"
+          >
+            arrow_back
+          </button>
           <div className="text-sm text-on-surface-variant">WebTech</div>
           <div className="text-sm font-medium text-on-surface">Quiz Session</div>
         </div>
@@ -112,21 +135,25 @@ const QuizPage = () => {
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full bg-primary-container animate-pulse" />
             <span className="text-sm text-on-surface">{subject}</span>
-            <span className="text-xs text-on-surface-variant">Q{currentIndex + 1} of {questions.length}</span>
+            <span className="text-xs text-on-surface-variant">
+              Q{currentIndex + 1} of {questions.length}
+            </span>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-primary/30 bg-surface-container-high px-3 py-1 text-sm font-medium text-primary">
-            <span className="material-symbols-outlined text-base">timer</span>
-            {formatTime(timeLeft)}
-          </div>
+          <CountdownTimer timeLeft={timeLeft} onTimeExpired={handleTimeExpired} totalTime={1200} />
         </div>
 
         <div className="mb-5 h-2 overflow-hidden rounded-full bg-surface-container-lowest">
-          <div className="h-full rounded-full bg-gradient-to-r from-primary-container to-primary shadow-[0_0_20px_rgba(56,189,248,0.45)]" style={{ width: progressWidth }} />
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-primary-container to-primary shadow-[0_0_20px_rgba(56,189,248,0.45)] transition-all duration-300"
+            style={{ width: progressWidth }}
+          />
         </div>
 
         <div className="rounded-2xl border border-outline-variant/30 bg-surface-container/70 p-5 backdrop-blur-xl">
           <div className="mb-4 flex items-center justify-between">
-            <span className="rounded-full bg-primary-container/20 px-2 py-1 text-xs font-medium text-primary">{subject}</span>
+            <span className="rounded-full bg-primary-container/20 px-2 py-1 text-xs font-medium text-primary">
+              {subject}
+            </span>
             <span className="text-xs font-medium text-on-surface-variant">+50 XP</span>
           </div>
 
@@ -162,10 +189,16 @@ const QuizPage = () => {
                     name="quiz-option"
                     className="sr-only"
                   />
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full border ${isSelected ? 'border-primary bg-primary-container' : 'border-outline'}`}>
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full border ${
+                      isSelected ? 'border-primary bg-primary-container' : 'border-outline'
+                    }`}
+                  >
                     {isSelected ? <span className="h-2 w-2 rounded-full bg-on-primary-container" /> : null}
                   </span>
-                  <span className="font-medium text-on-surface">{option.id}. {option.text}</span>
+                  <span className="font-medium text-on-surface">
+                    {option.id}. {option.text}
+                  </span>
                 </label>
               );
             })}
@@ -173,7 +206,11 @@ const QuizPage = () => {
         </div>
 
         <div className="mt-6 flex items-center justify-between gap-3">
-          <button type="button" className="rounded-xl border border-outline-variant/40 bg-surface-container/60 px-4 py-3 text-sm font-medium text-on-surface-variant disabled:opacity-60" disabled>
+          <button
+            type="button"
+            className="rounded-xl border border-outline-variant/40 bg-surface-container/60 px-4 py-3 text-sm font-medium text-on-surface-variant disabled:opacity-60"
+            disabled
+          >
             Hint <span className="ml-1 rounded-full bg-surface-container-high px-2 py-0.5 text-xs text-on-surface">0</span>
           </button>
 
@@ -181,7 +218,7 @@ const QuizPage = () => {
             type="button"
             onClick={handleNext}
             disabled={isSubmitting}
-            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary-container to-primary px-5 py-3 text-sm font-semibold text-on-primary-container"
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary-container to-primary px-5 py-3 text-sm font-semibold text-on-primary-container disabled:opacity-60 transition"
           >
             {currentIndex === questions.length - 1 ? 'Submit Quiz' : 'Next Question'}
             <span className="material-symbols-outlined text-base">arrow_forward</span>
