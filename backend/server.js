@@ -8,7 +8,14 @@ const app = express();
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
-  return /^http:\/\/localhost:(\d+)$/.test(origin) || /^http:\/\/127\.0\.0\.1:(\d+)$/.test(origin);
+
+  const allowedPatterns = [
+    /^http:\/\/localhost:(\d+)$/,
+    /^http:\/\/127\.0\.0\.1:(\d+)$/,
+    /^https:\/\/[a-z0-9-]+\.netlify\.app$/,
+  ];
+
+  return allowedPatterns.some((pattern) => pattern.test(origin));
 };
 
 connectDB();
@@ -20,6 +27,7 @@ app.use(
         callback(null, true);
         return;
       }
+      console.warn(`CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
@@ -34,11 +42,17 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/quiz', require('./routes/quizRoutes'));
 app.use('/api/results', require('./routes/resultRoutes'));
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'Backend is running' });
+});
+
 app.use((err, req, res, next) => {
+  console.error('Error:', err.message);
   res.status(500).json({ message: err.message });
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ CORS enabled for: localhost, 127.0.0.1, and *.netlify.app domains`);
 });
